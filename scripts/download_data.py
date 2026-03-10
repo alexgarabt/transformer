@@ -160,9 +160,9 @@ def main():
 
     d = args.output_dir
     print(f"\n── Next steps ──")
-    print(f"  uv run python scripts/train_lm.py train-tokenizer --text {d}/train.txt --prefix {d}/tok --vocab-size 32000")
-    print(f"  uv run python scripts/train_lm.py prepare --text {d}/train.txt --tokenizer {d}/tok.model --output {d}/train.npy")
-    print(f"  uv run python scripts/train_lm.py prepare --text {d}/val.txt --tokenizer {d}/tok.model --output {d}/val.npy")
+    print(f"  uv run python scripts/train_llm.py train-tokenizer --text {d}/train.txt --prefix {d}/tok --vocab-size 32000")
+    print(f"  uv run python scripts/train_llm.py prepare --text {d}/train.txt --tokenizer {d}/tok.model --output {d}/train.npy")
+    print(f"  uv run python scripts/train_llm.py prepare --text {d}/val.txt --tokenizer {d}/tok.model --output {d}/val.npy")
 
 
 if __name__ == "__main__":

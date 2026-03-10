@@ -1,5 +1,7 @@
 hub_cache/
 runs/
+./data/
+data/
 checkpoints/
 checkpoint_dir/
 outputs/

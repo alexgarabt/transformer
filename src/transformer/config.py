@@ -22,6 +22,7 @@ class TrainingConfig:
     checkpoint_dir: str = "checkpoints"
     tensorboard_dir: str = "runs"
     gradient_accumulation_steps: int = 1
+    precision: str = "bfloat16"  # "float32", "float16", or "bfloat16"
 
 @dataclass
 class TransformerLMConfig:

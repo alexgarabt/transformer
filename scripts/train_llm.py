@@ -2,20 +2,23 @@
 Train a GPT-style language model.
 
 Usage:
-    # From JSON config
-    uv run python scripts/train_lm.py train --config configs/gpt2_124m.json --train data/train.npy
+    # Everything from JSON config
+    uv run python scripts/train_llm.py train --config configs/gpt2_small_test.json
 
-    # From CLI args (overrides JSON if both given)
-    uv run python scripts/train_lm.py train --train data/train.npy --tokenizer data/tok.model --d-model 768
+    # JSON + CLI overrides
+    uv run python scripts/train_llm.py train --config configs/gpt2_small_test.json --batch-size 128
+
+    # Pure CLI (no JSON)
+    uv run python scripts/train_llm.py train --train data/train.npy --tokenizer data/tok.model
 
     # Continue training
-    uv run python scripts/train_lm.py continue --checkpoint checkpoints/gpt2_124m/best_model.pt --train data/train.npy
+    uv run python scripts/train_llm.py continue --checkpoint checkpoints/small_test/best_model.pt --train data/train.npy
 
     # Prepare data
-    uv run python scripts/train_lm.py prepare --text data/train.txt --tokenizer data/tok.model --output data/train.npy
+    uv run python scripts/train_llm.py prepare --text data/train.txt --tokenizer data/tok.model --output data/train.npy
 
     # Train tokenizer
-    uv run python scripts/train_lm.py train-tokenizer --text data/train.txt --prefix data/tok --vocab-size 16000
+    uv run python scripts/train_llm.py train-tokenizer --text data/train.txt --prefix data/tok --vocab-size 16000
 """
 
 import argparse
@@ -43,7 +46,6 @@ def config_from_dict(cls, d: dict):
 
 
 def load_json_config(path: str) -> dict:
-    """Load a JSON config file."""
     with open(path) as f:
         return json.load(f)
 
@@ -75,7 +77,6 @@ def save_params(
 
 
 def load_params(checkpoint_dir: Path) -> dict:
-    """Load params.json from checkpoint directory."""
     with open(checkpoint_dir / "params.json") as f:
         return json.load(f)
 
@@ -98,12 +99,13 @@ def parse_args():
     prep.add_argument("--text", type=str, required=True)
     prep.add_argument("--tokenizer", type=str, required=True)
     prep.add_argument("--output", type=str, required=True)
+    prep.add_argument("--n-workers", type=int, default=None, help="Parallel workers (default: all CPU cores)")
 
     # ── train ──
     train = sub.add_parser("train", help="Train from scratch")
     train.add_argument("--config", type=str, default=None, help="JSON config file (CLI args override)")
-    train.add_argument("--train", type=str, required=True, help="Training .npy")
-    train.add_argument("--val", type=str, default=None, help="Validation .npy")
+    train.add_argument("--train", type=str, default=None, help="Training .npy (or train_data in JSON)")
+    train.add_argument("--val", type=str, default=None, help="Validation .npy (or val_data in JSON)")
     train.add_argument("--tokenizer", type=str, default=None)
     train.add_argument("--epochs", type=int, default=None)
     train.add_argument("--batch-size", type=int, default=None)
@@ -125,7 +127,7 @@ def parse_args():
     # ── continue ──
     cont = sub.add_parser("continue", help="Continue training from checkpoint")
     cont.add_argument("--checkpoint", type=str, required=True)
-    cont.add_argument("--train", type=str, required=True)
+    cont.add_argument("--train", type=str, default=None, help="Training .npy (default: from params.json)")
     cont.add_argument("--val", type=str, default=None)
     cont.add_argument("--extra-epochs", type=int, default=10)
     cont.add_argument("--batch-size", type=int, default=None)
@@ -151,13 +153,12 @@ def cmd_train_tokenizer(args):
 
 def cmd_prepare(args):
     tokenizer = Tokenizer(args.tokenizer)
-    n_tokens = TextDataset.prepare(args.text, args.output, tokenizer)
+    n_tokens = TextDataset.prepare(args.text, args.output, tokenizer, n_workers=args.n_workers)
     print(f"Tokenized {n_tokens:,} tokens → {args.output}")
 
 
 def cmd_train(args):
-    # ── Merge JSON config + CLI overrides ──
-    # Defaults
+    # ── Defaults ──
     cfg = {
         "model": {
             "vocab_size": 32000,
@@ -184,30 +185,39 @@ def cmd_train(args):
             "device": "cuda",
             "checkpoint_dir": "checkpoints",
             "tensorboard_dir": "runs",
+            "gradient_accumulation_steps": 1,
         },
         "tokenizer_path": None,
+        "train_data": None,
+        "val_data": None,
         "warmup_steps": 700,
         "seed": 42,
-        "gradient_accumulation_steps": 1,
     }
 
-    # Layer 1: JSON file overrides defaults
+    # ── Layer 1: JSON overrides defaults ──
     if args.config:
         json_cfg = load_json_config(args.config)
         if "model" in json_cfg:
             cfg["model"].update(json_cfg["model"])
         if "training" in json_cfg:
             cfg["training"].update(json_cfg["training"])
-        for k in ("tokenizer_path", "warmup_steps", "seed", "gradient_accumulation_steps"):
+        for k in ("tokenizer_path", "train_data", "val_data", "warmup_steps", "seed"):
             if k in json_cfg:
                 cfg[k] = json_cfg[k]
+        # gradient_accumulation_steps can be top-level or in training
+        if "gradient_accumulation_steps" in json_cfg:
+            cfg["training"]["gradient_accumulation_steps"] = json_cfg["gradient_accumulation_steps"]
 
-    # Layer 2: CLI args override JSON (only if explicitly provided)
-    cli_to_model = {"d_model": "d_model", "n_heads": "n_heads", "n_layers": "n_layers", "d_ff": "d_ff",
-                     "dropout": "dropout", "seq_len": "max_seq_len"}
-    cli_to_training = {"batch_size": "batch_size", "lr": "learning_rate", "epochs": "max_epochs",
-                        "grad_clip": "grad_clip", "checkpoint_dir": "checkpoint_dir",
-                        "tensorboard_dir": "tensorboard_dir", "device": "device"}
+    # ── Layer 2: CLI overrides JSON ──
+    cli_to_model = {
+        "d_model": "d_model", "n_heads": "n_heads", "n_layers": "n_layers",
+        "d_ff": "d_ff", "dropout": "dropout", "seq_len": "max_seq_len",
+    }
+    cli_to_training = {
+        "batch_size": "batch_size", "lr": "learning_rate", "epochs": "max_epochs",
+        "grad_clip": "grad_clip", "checkpoint_dir": "checkpoint_dir",
+        "tensorboard_dir": "tensorboard_dir", "device": "device",
+    }
 
     for cli_key, cfg_key in cli_to_model.items():
         val = getattr(args, cli_key, None)
@@ -226,18 +236,21 @@ def cmd_train(args):
     if args.seed is not None:
         cfg["seed"] = args.seed
     if args.gradient_accumulation_steps is not None:
-        cfg["gradient_accumulation_steps"] = args.gradient_accumulation_steps
+        cfg["training"]["gradient_accumulation_steps"] = args.gradient_accumulation_steps
 
-    # Auto-compute d_ff if not set and d_model was changed
     if args.d_ff is None and args.d_model is not None:
         cfg["model"]["d_ff"] = cfg["model"]["d_model"] * 4
 
+    # ── Layer 3: resolve data paths (CLI overrides JSON) ──
+    train_path = args.train or cfg.get("train_data")
+    val_path = args.val or cfg.get("val_data")
+
     # ── Validate ──
-    assert cfg["tokenizer_path"] is not None, "Tokenizer path required (--tokenizer or in JSON config)"
+    assert train_path is not None, "Training data required (--train or train_data in JSON)"
+    assert cfg["tokenizer_path"] is not None, "Tokenizer path required (--tokenizer or tokenizer_path in JSON)"
 
     set_seed(cfg["seed"])
     tokenizer = Tokenizer(cfg["tokenizer_path"])
-    grad_accum = cfg["gradient_accumulation_steps"]
 
     # ── Build configs ──
     cfg["model"]["vocab_size"] = tokenizer.vocab_size
@@ -257,20 +270,21 @@ def cmd_train(args):
     print(f"  dropout={model_config.dropout}, weight_tying={model_config.weight_tying}")
 
     # ── Data ──
-    train_ds = TextDataset(args.train, seq_len=model_config.max_seq_len)
+    train_ds = TextDataset(train_path, seq_len=model_config.max_seq_len)
     train_loader = DataLoader(
         train_ds, batch_size=training_config.batch_size,
         shuffle=True, num_workers=4, pin_memory=True,
     )
 
     val_loader = None
-    if args.val:
-        val_ds = TextDataset(args.val, seq_len=model_config.max_seq_len)
+    if val_path:
+        val_ds = TextDataset(val_path, seq_len=model_config.max_seq_len)
         val_loader = DataLoader(
             val_ds, batch_size=training_config.batch_size,
             shuffle=False, num_workers=4, pin_memory=True,
         )
 
+    grad_accum = training_config.gradient_accumulation_steps
     effective_batch = training_config.batch_size * model_config.max_seq_len * grad_accum
     print(f"  batch_size={training_config.batch_size} × seq_len={model_config.max_seq_len} "
           f"× grad_accum={grad_accum} = {effective_batch:,} tokens/step")
@@ -311,6 +325,11 @@ def cmd_continue(args):
     tokenizer = Tokenizer(params["tokenizer_path"])
     batch_size = args.batch_size or params["training"]["batch_size"]
 
+    # Resolve data paths: CLI overrides params.json
+    train_path = args.train or params.get("train_data")
+    val_path = args.val or params.get("val_data")
+    assert train_path is not None, "Training data required (--train or train_data in params.json)"
+
     training_config = TrainingConfig(
         batch_size=batch_size,
         learning_rate=args.lr,
@@ -325,12 +344,12 @@ def cmd_continue(args):
 
     model = TransformerLM(model_config)
 
-    train_ds = TextDataset(args.train, seq_len=model_config.max_seq_len)
+    train_ds = TextDataset(train_path, seq_len=model_config.max_seq_len)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
 
     val_loader = None
-    if args.val:
-        val_ds = TextDataset(args.val, seq_len=model_config.max_seq_len)
+    if val_path:
+        val_ds = TextDataset(val_path, seq_len=model_config.max_seq_len)
         val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
     ckpt_dir = Path(args.checkpoint_dir)

@@ -3,12 +3,13 @@ Trainer for transformer models.
 
 Handles: training loop, validation, checkpointing, TensorBoard logging
 (scalars, histograms, matplotlib plots, attention analysis), LR scheduling,
+mixed precision (float32/float16/bfloat16), gradient accumulation,
 and checkpoint resumption.
 """
 
 import torch
-import matplotlib
 import torch.nn as nn
+import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -62,6 +63,11 @@ class Trainer:
         self.scheduler = scheduler
         self.device = config.device
 
+        # Mixed precision
+        self.autocast_dtype = {"float32": None, "float16": torch.float16, "bfloat16": torch.bfloat16}.get(config.precision)
+        self.use_amp = self.autocast_dtype is not None
+        self.scaler = torch.amp.GradScaler() if config.precision == "float16" else None
+
         self.checkpoint_dir = Path(config.checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.writer = SummaryWriter(log_dir=config.tensorboard_dir)
@@ -96,7 +102,9 @@ class Trainer:
             print(f"  Val batches: {len(self.val_loader):,}")
         if self.scheduler:
             print(f"  Scheduler: {self.scheduler.__class__.__name__}")
-        print()
+        print(f"  Precision: {self.config.precision}")
+        print(f"  Gradient accumulation: {self.config.gradient_accumulation_steps}")
+        print(f"\n  tensorboard --logdir {self.config.tensorboard_dir}\n")
 
         for epoch in range(self.start_epoch, end_epoch):
             train_loss = self._train_epoch(epoch)
@@ -128,7 +136,7 @@ class Trainer:
     # ── Training & validation loops ────────────────────────────────────
 
     def _train_epoch(self, epoch: int) -> float:
-        """Train for one epoch with optional gradient accumulation. Returns mean loss."""
+        """Train for one epoch with gradient accumulation and mixed precision."""
         self.model.train()
         total_loss = 0.0
         n_batches = 0
@@ -141,26 +149,38 @@ class Trainer:
             input_ids = input_ids.to(self.device)
             targets = targets.to(self.device)
 
-            logits = self.model(input_ids)
-            loss = compute_loss(logits, targets, ignore_index=self.config.pad_id)
-            # Scale loss by accumulation steps so the averaged gradient is correct
-            scaled_loss = loss / grad_accum
-            scaled_loss.backward()
+            with torch.autocast(device_type=self.device, dtype=self.autocast_dtype, enabled=self.use_amp):
+                logits = self.model(input_ids)
+                loss = compute_loss(logits, targets, ignore_index=self.config.pad_id)
+                scaled_loss = loss / grad_accum
+
+            if self.scaler is not None:
+                self.scaler.scale(scaled_loss).backward()
+            else:
+                scaled_loss.backward()
 
             total_loss += loss.item()
             n_batches += 1
 
-            # Step optimizer every grad_accum batches (or on the last batch)
-            is_accumulation_step = (batch_idx + 1) % grad_accum == 0
+            is_accum_step = (batch_idx + 1) % grad_accum == 0
             is_last_batch = (batch_idx + 1) == len(self.train_loader)
 
-            if is_accumulation_step or is_last_batch:
-                grad_norm = nn.utils.clip_grad_norm_(
-                    self.model.parameters(),
-                    self.config.grad_clip if self.config.grad_clip > 0 else float("inf"),
-                ).item()
+            if is_accum_step or is_last_batch:
+                if self.scaler is not None:
+                    self.scaler.unscale_(self.optimizer)
+                    grad_norm = nn.utils.clip_grad_norm_(
+                        self.model.parameters(),
+                        self.config.grad_clip if self.config.grad_clip > 0 else float("inf"),
+                    ).item()
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    grad_norm = nn.utils.clip_grad_norm_(
+                        self.model.parameters(),
+                        self.config.grad_clip if self.config.grad_clip > 0 else float("inf"),
+                    ).item()
+                    self.optimizer.step()
 
-                self.optimizer.step()
                 self.optimizer.zero_grad()
 
                 if self.scheduler is not None:
@@ -182,7 +202,7 @@ class Trainer:
 
     @torch.no_grad()
     def _validate(self, epoch: int) -> float:
-        """Run validation. Returns mean loss."""
+        """Run validation with mixed precision. Returns mean loss."""
         self.model.eval()
         total_loss = 0.0
         total_acc = 0.0
@@ -193,10 +213,11 @@ class Trainer:
             input_ids = input_ids.to(self.device)
             targets = targets.to(self.device)
 
-            logits = self.model(input_ids)
-            loss = compute_loss(logits, targets, ignore_index=self.config.pad_id)
-            acc = compute_token_accuracy(logits, targets, ignore_index=self.config.pad_id)
+            with torch.autocast(device_type=self.device, dtype=self.autocast_dtype, enabled=self.use_amp):
+                logits = self.model(input_ids)
+                loss = compute_loss(logits, targets, ignore_index=self.config.pad_id)
 
+            acc = compute_token_accuracy(logits, targets, ignore_index=self.config.pad_id)
             total_loss += loss.item()
             total_acc += acc
             n_batches += 1
@@ -320,6 +341,8 @@ class Trainer:
         }
         if self.scheduler is not None:
             state["scheduler_state_dict"] = self.scheduler.state_dict()
+        if self.scaler is not None:
+            state["scaler_state_dict"] = self.scaler.state_dict()
 
         path = self.checkpoint_dir / f"epoch_{epoch}_loss_{loss:.4f}.pt"
         torch.save(state, path)
@@ -341,5 +364,8 @@ class Trainer:
 
         if self.scheduler is not None and "scheduler_state_dict" in checkpoint:
             self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+
+        if self.scaler is not None and "scaler_state_dict" in checkpoint:
+            self.scaler.load_state_dict(checkpoint["scaler_state_dict"])
 
         print(f"  Resumed at epoch {self.start_epoch}, step {self.global_step}, loss {checkpoint['loss']:.4f}")
