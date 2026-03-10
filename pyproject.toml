@@ -1,0 +1,39 @@
+[project]
+name = "Transformer"
+version = "0.1.0"
+description = "Simple transformer implementation from scratch in pytorch"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "torch",
+    "numpy",
+    "tensorboard",
+    "tqdm",
+    "rich",
+    "matplotlib",
+    "setuptools<82",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ipython",
+    "jupyter",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/transformer"]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu130" }]
+torchvision = [{ index = "pytorch-cu130" }]
+xformers = [{ index = "pytorch-cu130" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
