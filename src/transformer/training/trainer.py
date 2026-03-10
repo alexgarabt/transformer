@@ -330,11 +330,14 @@ class Trainer:
     # ── Checkpointing ──────────────────────────────────────────────────
 
     def _save_checkpoint(self, epoch: int, loss: float, is_best: bool) -> None:
-        """Save model checkpoint. Always saves epoch checkpoint, optionally saves best."""
+        """Save model checkpoint. Strips torch.compile prefix for portability."""
+        # Get state_dict from the unwrapped model if compiled
+        raw_model = getattr(self.model, "_orig_mod", self.model)
+
         state = {
             "epoch": epoch,
             "global_step": self.global_step,
-            "model_state_dict": self.model.state_dict(),
+            "model_state_dict": raw_model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
             "loss": loss,
             "best_val_loss": self.best_val_loss,
@@ -356,7 +359,11 @@ class Trainer:
         print(f"Resuming from {path}")
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)
 
-        self.model.load_state_dict(checkpoint["model_state_dict"])
+        # Handle torch.compile prefix: strip "_orig_mod." if present
+        state_dict = checkpoint["model_state_dict"]
+        state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
+
+        self.model.load_state_dict(state_dict)
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         self.start_epoch = checkpoint["epoch"] + 1
         self.global_step = checkpoint["global_step"]

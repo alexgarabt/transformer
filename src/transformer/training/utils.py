@@ -44,6 +44,7 @@ def get_cosine_schedule_with_warmup(
         if step < warmup_steps:
             return step / max(warmup_steps, 1)
         progress = (step - warmup_steps) / max(total_steps - warmup_steps, 1)
+        progress = min(progress, 1.0)  # prevent cosine wrap-around on resume
         return min_lr_ratio + (1.0 - min_lr_ratio) * 0.5 * (1.0 + math.cos(math.pi * progress))
 
     return LambdaLR(optimizer, lr_lambda)

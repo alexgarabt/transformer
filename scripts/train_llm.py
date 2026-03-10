@@ -261,6 +261,7 @@ def cmd_train(args):
     # ── Model ──
     model = TransformerLM(model_config)
     init_weights(model, n_layers=model_config.n_layers)
+    model = torch.compile(model)
     n_params = sum(p.numel() for p in model.parameters())
 
     print(f"Model: {n_params:,} parameters")
@@ -273,7 +274,7 @@ def cmd_train(args):
     train_ds = TextDataset(train_path, seq_len=model_config.max_seq_len)
     train_loader = DataLoader(
         train_ds, batch_size=training_config.batch_size,
-        shuffle=True, num_workers=4, pin_memory=True,
+        shuffle=True, num_workers=20, pin_memory=True,
     )
 
     val_loader = None

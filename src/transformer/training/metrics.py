@@ -213,7 +213,7 @@ def extract_attention_weights(
     """
     Run a forward pass and collect attention weights from all layers.
 
-    Uses forward hooks — no modification to the model's forward() needed.
+    Uses forward hooks with a re-entrancy guard to avoid infinite recursion.
 
     Parameters
     ----------
@@ -231,28 +231,28 @@ def extract_attention_weights(
     model.eval()
     attention_maps: list[torch.Tensor] = []
     hooks = []
+    _inside_hook = {"flag": False}
 
     def make_hook(storage: list):
         def hook_fn(module, args, kwargs, output):
-            # Call forward again with return_weights=True
-            # This is a bit wasteful but clean — no model modification needed
-            with torch.no_grad():
+            if _inside_hook["flag"]:
+                return
+            _inside_hook["flag"] = True
+            try:
                 _, weights = module(*args, **kwargs, return_weights=True)
                 storage.append(weights.detach().cpu())
+            finally:
+                _inside_hook["flag"] = False
         return hook_fn
 
-    # Register hooks on each self_attn module
-    # Navigate: model.decoder.blocks[i].self_attn
     decoder = model.decoder if hasattr(model, "decoder") else model
     for block in decoder.blocks:
         layer_weights: list[torch.Tensor] = []
         hook = block.self_attn.register_forward_hook(make_hook(layer_weights), with_kwargs=True)
         hooks.append((hook, layer_weights))
 
-    # Forward pass
     model(input_ids)
 
-    # Collect results and remove hooks
     for hook, layer_weights in hooks:
         hook.remove()
         if layer_weights:

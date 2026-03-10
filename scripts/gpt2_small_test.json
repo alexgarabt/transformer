@@ -14,7 +14,7 @@
         "weight_tying": true
     },
     "training": {
-        "batch_size": 64,
+        "batch_size": 256,
         "learning_rate": 6e-4,
         "max_epochs": 5,
         "grad_clip": 1.0,
@@ -28,6 +28,5 @@
     "train_data": "data/train.npy",
     "val_data": "data/val.npy",
     "warmup_steps": 200,
-    "seed": 42,
-    "gradient_accumulation_steps": 1
+    "seed": 42
 }
