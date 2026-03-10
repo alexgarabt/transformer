@@ -9,6 +9,19 @@ MaskedLMConfig            — Encoder-only masked LM (BERT)
 from dataclasses import dataclass
 from typing import Literal
 
+@dataclass
+class TrainingConfig:
+    """Training hyperparameters — everything the Trainer needs that isn't the model."""
+    batch_size: int = 32
+    learning_rate: float = 3e-4
+    max_epochs: int = 10
+    grad_clip: float = 1.0
+    pad_id: int = 0
+    log_every: int = 50
+    device: str = "cuda"
+    checkpoint_dir: str = "checkpoints"
+    tensorboard_dir: str = "runs"
+    gradient_accumulation_steps: int = 1
 
 @dataclass
 class TransformerLMConfig:

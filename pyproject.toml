@@ -12,6 +12,7 @@ dependencies = [
     "rich",
     "matplotlib",
     "setuptools<82",
+    "sentencepiece",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +20,10 @@ dev = [
     "pytest",
     "ipython",
     "jupyter",
+]
+data = [
+    "datasets",
+    "huggingface_hub",
 ]
 
 [build-system]

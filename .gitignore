@@ -1,8 +1,5 @@
 hub_cache/
-training
 runs/
-data/
-data/raw/
 checkpoints/
 checkpoint_dir/
 outputs/

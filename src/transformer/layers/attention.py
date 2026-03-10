@@ -46,7 +46,7 @@ class MultiHeadAttention(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, q_src: torch.Tensor, k_src: torch.Tensor, v_src: torch.Tensor, mask: torch.Tensor | None = None, causal: bool = False) -> torch.Tensor:
+    def forward(self, q_src: torch.Tensor, k_src: torch.Tensor, v_src: torch.Tensor, mask: torch.Tensor | None = None, causal: bool = False, return_weights: bool = False) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         """
         Compute multi-head attention.
 
@@ -74,6 +74,7 @@ class MultiHeadAttention(nn.Module):
         -------
         Tensor, shape (batch, seq_q, d_model)
             Contextualized representations. Same shape as q_src.
+        Or tuple of (output, attn_weights) if return_weights=True.
         """
         batch_size, seq_q, _ = q_src.shape
         seq_k = k_src.shape[1]
@@ -96,12 +97,15 @@ class MultiHeadAttention(nn.Module):
 
         # softmax + dropout
         attn_weights = F.softmax(scores, dim=-1)
-        attn_weights = self.dropout(attn_weights)
+        attn_weights_dropped = self.dropout(attn_weights)
 
         # heads values -> (batch, n_heads, seq_q, d_head)
-        context = attn_weights @ V
+        context = attn_weights_dropped @ V
         context = self._reshape_from_heads(context)
-        return self.W_O(context)
+        output = self.W_O(context)
+
+        if return_weights: return output, attn_weights
+        return output
 
 
     def _reshape_to_heads(self, x: torch.Tensor) -> torch.Tensor:
