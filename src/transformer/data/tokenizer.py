@@ -81,7 +81,7 @@ class Tokenizer:
             kwargs["input_sentence_size"] = input_sentence_size
             kwargs["shuffle_input_sentence"] = True
 
-        kwargs["max_sentence_length"] = 0
+        kwargs["max_sentence_length"] = 1048576
 
         spm.SentencePieceTrainer.Train(**kwargs)
         return cls(f"{model_prefix}.model")
