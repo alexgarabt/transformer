@@ -1,5 +1,6 @@
 {
     "model": {
+        "vocab_size": 32000,
         "d_model": 768,
         "n_heads": 12,
         "n_layers": 12,

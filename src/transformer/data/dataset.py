@@ -90,7 +90,7 @@ class TextDataset(Dataset):
         byte_ranges = _compute_byte_ranges(text_path, n_chunks)
     
         # Create temp directory for chunk files
-        tmp_dir = Path(tempfile.mkdtemp(prefix="tokenize_"))
+        tmp_dir = Path(tempfile.mkdtemp(prefix="tokenize_", dir=output_path.parent))
     
         worker_args = [
             (str(text_path), start, end, str(tokenizer.model_path), eos_between_docs, str(tmp_dir / f"chunk_{i:05d}.bin"))
