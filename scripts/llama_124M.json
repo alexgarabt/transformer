@@ -1,6 +1,5 @@
 {
     "model": {
-        "vocab_size": 32000,
         "d_model": 768,
         "n_heads": 12,
         "n_layers": 12,
@@ -15,7 +14,7 @@
         "weight_tying": true
     },
     "training": {
-        "batch_size": 256,
+        "batch_size": 512,
         "learning_rate": 6e-4,
         "max_epochs": 1,
         "grad_clip": 1.0,
@@ -24,7 +23,7 @@
         "checkpoint_dir": "checkpoints/llama_124m",
         "tensorboard_dir": "runs/llama_124m",
         "precision": "bfloat16",
-        "gradient_accumulation_steps": 2
+        "gradient_accumulation_steps": 1
     },
     "tokenizer_path": "data/tok_32k.model",
     "train_data": "data/train_10bt.npy",
