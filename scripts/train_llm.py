@@ -19,6 +19,8 @@ Usage:
 
     # Train tokenizer
     uv run python scripts/train_llm.py train-tokenizer --text data/train.txt --prefix data/tok --vocab-size 16000
+    uv run scripts/train_llm.py train-tokenizer --text data/train.txt --prefix data/tok_32k --vocab-size 32000 --sample-size 5000000
+
 """
 
 import argparse
@@ -93,6 +95,7 @@ def parse_args():
     tok.add_argument("--text", type=str, required=True)
     tok.add_argument("--prefix", type=str, required=True)
     tok.add_argument("--vocab-size", type=int, default=16000)
+    tok.add_argument("--sample-size", type=int, default=5_000_000, help="Max lines to sample for training, 0 = use all lines")
 
     # ── prepare ──
     prep = sub.add_parser("prepare", help="Tokenize text to .npy")
@@ -147,8 +150,12 @@ def parse_args():
 
 
 def cmd_train_tokenizer(args):
-    print(f"Training tokenizer: vocab_size={args.vocab_size}")
-    tokenizer = Tokenizer.train(args.text, args.prefix, vocab_size=args.vocab_size)
+    print(f"Training tokenizer: vocab_size={args.vocab_size}, sample_size={args.sample_size:,}")
+    tokenizer = Tokenizer.train(
+        args.text, args.prefix,
+        vocab_size=args.vocab_size,
+        input_sentence_size=args.sample_size,
+    )
     print(f"Saved: {args.prefix}.model ({tokenizer.vocab_size} tokens)")
 
 def cmd_prepare(args):

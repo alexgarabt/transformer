@@ -38,6 +38,7 @@ class Tokenizer:
         model_prefix: str | Path,
         vocab_size: int = 32000,
         model_type: str = "bpe",
+        input_sentence_size: int = 5_000_000,
     ) -> "Tokenizer":
         """
         Train a new SentencePiece model from a text file.
@@ -52,26 +53,35 @@ class Tokenizer:
             Target vocabulary size.
         model_type : str
             "bpe" or "unigram".
+        input_sentence_size : int
+            Max lines to sample for training. 0 = use all lines.
+            Default 5M is enough for a representative vocabulary.
 
         Returns
         -------
         Tokenizer
             Loaded tokenizer with the freshly trained model.
         """
-        spm.SentencePieceTrainer.Train(
-            input=str(input_file),
-            model_prefix=str(model_prefix),
-            vocab_size=vocab_size,
-            model_type=model_type,
-            pad_id=0,
-            unk_id=1,
-            bos_id=2,
-            eos_id=3,
-            pad_piece="<pad>",
-            unk_piece="<unk>",
-            bos_piece="<s>",
-            eos_piece="</s>",
-        )
+        kwargs = {
+            "input": str(input_file),
+            "model_prefix": str(model_prefix),
+            "vocab_size": vocab_size,
+            "model_type": model_type,
+            "pad_id": 0,
+            "unk_id": 1,
+            "bos_id": 2,
+            "eos_id": 3,
+            "pad_piece": "<pad>",
+            "unk_piece": "<unk>",
+            "bos_piece": "<s>",
+            "eos_piece": "</s>",
+        }
+
+        if input_sentence_size > 0:
+            kwargs["input_sentence_size"] = input_sentence_size
+            kwargs["shuffle_input_sentence"] = True
+
+        spm.SentencePieceTrainer.Train(**kwargs)
         return cls(f"{model_prefix}.model")
 
     def encode(self, text: str, add_bos: bool = False, add_eos: bool = False) -> list[int]:
