@@ -24,6 +24,7 @@ dev = [
 data = [
     "datasets",
     "huggingface_hub",
+    "pyarrow"
 ]
 
 [build-system]

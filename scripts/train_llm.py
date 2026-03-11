@@ -276,7 +276,7 @@ def cmd_train(args):
     train_ds = TextDataset(train_path, seq_len=model_config.max_seq_len)
     train_loader = DataLoader(
         train_ds, batch_size=training_config.batch_size,
-        shuffle=True, num_workers=20, pin_memory=True,
+        shuffle=True, num_workers=4, pin_memory=True,
     )
 
     val_loader = None
