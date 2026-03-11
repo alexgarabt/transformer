@@ -100,6 +100,7 @@ def parse_args():
     prep.add_argument("--tokenizer", type=str, required=True)
     prep.add_argument("--output", type=str, required=True)
     prep.add_argument("--n-workers", type=int, default=None, help="Parallel workers (default: all CPU cores)")
+    prep.add_argument("--n-chunks", type=int, default=None, help="Dataset is divided into chunks that are parallel processed")
 
     # ── train ──
     train = sub.add_parser("train", help="Train from scratch")
@@ -150,12 +151,13 @@ def cmd_train_tokenizer(args):
     tokenizer = Tokenizer.train(args.text, args.prefix, vocab_size=args.vocab_size)
     print(f"Saved: {args.prefix}.model ({tokenizer.vocab_size} tokens)")
 
-
 def cmd_prepare(args):
     tokenizer = Tokenizer(args.tokenizer)
-    n_tokens = TextDataset.prepare(args.text, args.output, tokenizer, n_workers=args.n_workers)
+    n_tokens = TextDataset.prepare(
+        args.text, args.output, tokenizer,
+        n_workers=args.n_workers, n_chunks=args.n_chunks,
+    )
     print(f"Tokenized {n_tokens:,} tokens → {args.output}")
-
 
 def cmd_train(args):
     # ── Defaults ──

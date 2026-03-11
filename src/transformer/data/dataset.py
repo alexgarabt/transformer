@@ -6,8 +6,10 @@ TextDataset — Causal LM: consecutive token chunks from a pre-tokenized .npy fi
               Parallel tokenization via byte-range splitting for large files.
 """
 
-import numpy as np
 import torch
+import tempfile
+import shutil
+import numpy as np
 import multiprocessing as mp
 
 from pathlib import Path
@@ -62,43 +64,24 @@ class TextDataset(Dataset):
         tokenizer: Tokenizer,
         eos_between_docs: bool = True,
         n_workers: int | None = None,
-        n_chunks: int = 256,
+        n_chunks: int | None = None,
     ) -> int:
         """
         Tokenize a raw text file and save as .npy for fast loading.
     
-        Uses multiprocessing with byte-range splitting — each worker seeks
-        directly into the file and tokenizes its portion. Memory usage is
-        ~50MB per worker regardless of file size.
+        Uses multiprocessing with byte-range splitting. Workers write
+        to temporary files to avoid holding the full dataset in RAM.
     
-        Parameters
-        ----------
-        text_file : path
-            Raw text, one document per line.
-        output_file : path
-            Output .npy file.
-        tokenizer : Tokenizer
-            Tokenizer instance with .encode() method.
-        eos_between_docs : bool
-            If True, insert eos token between documents.
-        n_workers : int or None
-            Parallel workers. None = all CPU cores.
-        n_chunks : int
-            Number of file chunks for progress granularity.
-            More chunks = smoother progress bar. Workers pull chunks from a queue.
-    
-        Returns
-        -------
-        int
-            Total number of tokens written.
+        Memory usage: ~50MB per worker regardless of dataset size.
         """
+    
         text_path = Path(text_file)
         output_path = Path(output_file)
     
         if n_workers is None:
             n_workers = mp.cpu_count()
-    
-        n_chunks = max(n_chunks, n_workers * 4)
+        if n_chunks is None:
+            n_chunks = max(256, n_workers * 32)
     
         file_size = text_path.stat().st_size
         print(f"Tokenizing {text_path} ({file_size / (1024**3):.2f} GB)")
@@ -106,31 +89,45 @@ class TextDataset(Dataset):
     
         byte_ranges = _compute_byte_ranges(text_path, n_chunks)
     
+        # Create temp directory for chunk files
+        tmp_dir = Path(tempfile.mkdtemp(prefix="tokenize_"))
+    
         worker_args = [
-            (str(text_path), start, end, str(tokenizer.model_path), eos_between_docs)
-            for start, end in byte_ranges
+            (str(text_path), start, end, str(tokenizer.model_path), eos_between_docs, str(tmp_dir / f"chunk_{i:05d}.bin"))
+            for i, (start, end) in enumerate(byte_ranges)
         ]
     
-        results: list[np.ndarray] = []
-        total_tokens = 0
-    
+        # Tokenize in parallel — each worker writes its own temp file
         with mp.Pool(n_workers) as pool:
-            for chunk_tokens in tqdm(
+            chunk_infos = list(tqdm(
                 pool.imap(_tokenize_byte_range, worker_args),
                 total=len(worker_args),
                 desc="Tokenizing",
                 unit=" chunks",
-            ):
-                results.append(chunk_tokens)
-                total_tokens += len(chunk_tokens)
+            ))
     
-        all_tokens = np.concatenate(results)
-        np.save(output_path, all_tokens)
+        # Concatenate temp files into final .npy without loading all into RAM
+        total_tokens = sum(n for _, n in chunk_infos)
+        print(f"  Merging {total_tokens:,} tokens...")
+    
+        # Write .npy with correct header, then append chunk data
+        tokens_array = np.empty(total_tokens, dtype=np.int32)
+        offset = 0
+        for chunk_path, n in tqdm(chunk_infos, desc="Merging", unit=" chunks"):
+            chunk = np.fromfile(chunk_path, dtype=np.int32)
+            tokens_array[offset : offset + n] = chunk
+            offset += n
+    
+        np.save(output_path, tokens_array)
+        del tokens_array
+    
+        # Cleanup
+        shutil.rmtree(tmp_dir)
     
         size_mb = output_path.stat().st_size / (1024 ** 2)
         print(f"  {total_tokens:,} tokens → {output_path} ({size_mb:.1f} MB)")
     
-        return total_tokens 
+        return total_tokens
 
 # ── Parallel tokenization helpers (module-level for pickling) ──────────
 
@@ -161,15 +158,13 @@ def _compute_byte_ranges(file_path: Path, n_chunks: int) -> list[tuple[int, int]
 
     return ranges
 
-
-def _tokenize_byte_range(args: tuple[str, int, int, str, bool]) -> np.ndarray:
+def _tokenize_byte_range(args: tuple[str, int, int, str, bool, str]) -> tuple[str, int]:
     """
-    Tokenize lines within a byte range of a text file.
+    Tokenize lines within a byte range and write to a temp binary file.
 
-    Runs in a worker process. Each worker loads its own Tokenizer
-    because SentencePiece objects can't be pickled across processes.
+    Returns (temp_file_path, n_tokens).
     """
-    file_path, byte_start, byte_end, tokenizer_path, eos_between_docs = args
+    file_path, byte_start, byte_end, tokenizer_path, eos_between_docs, out_path = args
     tok = Tokenizer(tokenizer_path)
     buffer: list[int] = []
 
@@ -187,4 +182,7 @@ def _tokenize_byte_range(args: tuple[str, int, int, str, bool]) -> np.ndarray:
             if eos_between_docs:
                 buffer.append(tok.eos_id)
 
-    return np.array(buffer, dtype=np.int32)
+    tokens = np.array(buffer, dtype=np.int32)
+    tokens.tofile(out_path)
+
+    return out_path, len(tokens)
