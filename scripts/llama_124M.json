@@ -19,6 +19,7 @@
         "max_epochs": 1,
         "grad_clip": 1.0,
         "log_every": 100,
+        "attention_log_every": 2000,
         "device": "cuda",
         "checkpoint_dir": "checkpoints/llama_124m",
         "tensorboard_dir": "runs/llama_124m",
