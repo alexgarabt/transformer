@@ -70,7 +70,7 @@ class Trainer:
 
         self.checkpoint_dir = Path(config.checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        self.writer = SummaryWriter(log_dir=config.tensorboard_dir)
+        self.writer = SummaryWriter(log_dir=config.tensorboard_dir, flush_secs=30)
 
         self.global_step = 0
         self.start_epoch = 0
@@ -81,7 +81,7 @@ class Trainer:
         self.val_loss_history: list[float] = []
         self.lr_history: list[float] = []
 
-        # Fixed example for attention visualization (grabbed on first epoch)
+        # Fixed example for attention visualization (grabbed on first use)
         self._viz_input: torch.Tensor | None = None
 
         if resume_from is not None:
@@ -104,6 +104,7 @@ class Trainer:
             print(f"  Scheduler: {self.scheduler.__class__.__name__}")
         print(f"  Precision: {self.config.precision}")
         print(f"  Gradient accumulation: {self.config.gradient_accumulation_steps}")
+        print(f"  Attention log every: {self.config.attention_log_every} steps")
         print(f"\n  tensorboard --logdir {self.config.tensorboard_dir}\n")
 
         for epoch in range(self.start_epoch, end_epoch):
@@ -116,7 +117,6 @@ class Trainer:
 
             self._log_epoch(epoch, train_loss, val_loss)
 
-            # Print summary
             lr = self.optimizer.param_groups[0]["lr"]
             ppl = compute_perplexity(train_loss)
             summary = f"Epoch {epoch} | train_loss={train_loss:.4f} ppl={ppl:.1f} lr={lr:.2e}"
@@ -124,7 +124,6 @@ class Trainer:
                 summary += f" | val_loss={val_loss:.4f} val_ppl={compute_perplexity(val_loss):.1f}"
             print(summary)
 
-            # Checkpoint
             is_best = val_loss is not None and val_loss < self.best_val_loss
             if is_best:
                 self.best_val_loss = val_loss
@@ -192,6 +191,9 @@ class Trainer:
                 if self.global_step % self.config.log_every == 0:
                     self._log_step(loss.item(), grad_norm, logits, targets)
 
+                if self.config.attention_log_every > 0 and self.global_step % self.config.attention_log_every == 0:
+                    self._log_attention(self.global_step)
+
             pbar.set_postfix(
                 loss=f"{loss.item():.3f}",
                 ppl=f"{compute_perplexity(loss):.1f}",
@@ -244,8 +246,10 @@ class Trainer:
         acc = compute_token_accuracy(logits.detach(), targets, ignore_index=self.config.pad_id)
         self.writer.add_scalar("train/token_accuracy", acc, step)
 
+        self.writer.flush()
+
     def _log_epoch(self, epoch: int, train_loss: float, val_loss: float | None) -> None:
-        """Log epoch-level: scalars, weight/gradient histograms, matplotlib plots, attention."""
+        """Log epoch-level: scalars, weight/gradient histograms, matplotlib plots."""
 
         # ── Scalars ──
         self.writer.add_scalar("epoch/train_loss", train_loss, epoch)
@@ -283,10 +287,12 @@ class Trainer:
             self.writer.add_figure("plots/lr_schedule", fig, epoch)
             plt.close(fig)
 
-        # ── Attention analysis ──
-        self._log_attention(epoch)
+        # ── Final attention analysis at end of epoch ──
+        self._log_attention(self.global_step)
 
-    def _log_attention(self, epoch: int) -> None:
+        self.writer.flush()
+
+    def _log_attention(self, global_step: int) -> None:
         """Extract and log attention analysis for a fixed example."""
         if self._viz_input is None:
             for input_ids, _ in self.train_loader:
@@ -299,22 +305,23 @@ class Trainer:
         if not attn_maps:
             return
 
-        # ── Entropy heatmap (layers × heads) ──
         entropies = [compute_attention_entropy(w) for w in attn_maps]
+
+        # ── Entropy heatmap (layers × heads) ──
         fig = plot_attention_entropy_map(entropies)
-        self.writer.add_figure("attention/entropy_map", fig, epoch)
+        self.writer.add_figure("attention/entropy_map", fig, global_step)
         plt.close(fig)
 
         # ── Distance heatmap (layers × heads) ──
         distances = [compute_mean_attention_distance(w) for w in attn_maps]
         fig = plot_attention_distance_map(distances)
-        self.writer.add_figure("attention/distance_map", fig, epoch)
+        self.writer.add_figure("attention/distance_map", fig, global_step)
         plt.close(fig)
 
         # ── Scalars per layer ──
         for layer_idx, (ent, w) in enumerate(zip(entropies, attn_maps)):
-            self.writer.add_scalar(f"attention/mean_entropy_L{layer_idx}", ent.mean().item(), epoch)
-            self.writer.add_scalar(f"attention/head_agreement_L{layer_idx}", compute_head_agreement(w), epoch)
+            self.writer.add_scalar(f"attention/mean_entropy_L{layer_idx}", ent.mean().item(), global_step)
+            self.writer.add_scalar(f"attention/head_agreement_L{layer_idx}", compute_head_agreement(w), global_step)
 
         # ── Heatmap of most focused head in first and last layer ──
         for layer_idx in [0, len(attn_maps) - 1]:
@@ -324,14 +331,15 @@ class Trainer:
                 attn_maps[layer_idx], layer=layer_idx, head=best_head,
                 title=f"Layer {layer_idx}, Head {best_head} (entropy={ent[best_head]:.2f})",
             )
-            self.writer.add_figure(f"attention/heatmap_L{layer_idx}", fig, epoch)
+            self.writer.add_figure(f"attention/heatmap_L{layer_idx}", fig, global_step)
             plt.close(fig)
+
+        self.writer.flush()
 
     # ── Checkpointing ──────────────────────────────────────────────────
 
     def _save_checkpoint(self, epoch: int, loss: float, is_best: bool) -> None:
         """Save model checkpoint. Strips torch.compile prefix for portability."""
-        # Get state_dict from the unwrapped model if compiled
         raw_model = getattr(self.model, "_orig_mod", self.model)
 
         state = {
@@ -359,7 +367,6 @@ class Trainer:
         print(f"Resuming from {path}")
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)
 
-        # Handle torch.compile prefix: strip "_orig_mod." if present
         state_dict = checkpoint["model_state_dict"]
         state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
 

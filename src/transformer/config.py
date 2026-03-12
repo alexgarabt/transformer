@@ -4,10 +4,12 @@ Configuration dataclasses for all transformer architectures.
 TransformerLMConfig       — Decoder-only language model (GPT)
 EncoderDecoderConfig      — Encoder-decoder for seq2seq (translation)
 MaskedLMConfig            — Encoder-only masked LM (BERT)
+TrainingConfig            — Training hyperparameters
 """
 
 from dataclasses import dataclass
 from typing import Literal
+
 
 @dataclass
 class TrainingConfig:
@@ -18,25 +20,21 @@ class TrainingConfig:
     grad_clip: float = 1.0
     pad_id: int = 0
     log_every: int = 50
+    attention_log_every: int = 2000
     device: str = "cuda"
     checkpoint_dir: str = "checkpoints"
     tensorboard_dir: str = "runs"
     gradient_accumulation_steps: int = 1
-    precision: str = "bfloat16"  # "float32", "float16", or "bfloat16"
+    precision: str = "bfloat16"
+
 
 @dataclass
 class TransformerLMConfig:
-    """
-    Decoder-only language model (GPT-2/GPT-3/LLaMA style).
-
-    All block-level parameters (d_model, n_heads, d_ff, etc.) are defined
-    here and passed down to TransformerBlock constructors.
-    """
     vocab_size: int = 32000
     d_model: int = 768
     n_heads: int = 12
     n_layers: int = 12
-    d_ff: int = 3072                                                # typically 4 * d_model
+    d_ff: int = 3072
     max_seq_len: int = 1024
     dropout: float = 0.1
     activation: Literal["relu", "gelu", "swiglu"] = "gelu"
@@ -44,7 +42,7 @@ class TransformerLMConfig:
     norm_first: bool = True
     bias: bool = True
     pos_encoding: Literal["sinusoidal", "learned"] = "sinusoidal"
-    weight_tying: bool = True                                       # share embedding <-> lm_head
+    weight_tying: bool = True
 
     @property
     def d_head(self) -> int:
@@ -54,12 +52,6 @@ class TransformerLMConfig:
 
 @dataclass
 class EncoderDecoderConfig:
-    """
-    Encoder-decoder for sequence-to-sequence tasks (translation, summarization).
-
-    Separate vocab sizes for source and target languages.
-    share_embeddings=True for shared vocabulary (e.g., multilingual models).
-    """
     src_vocab_size: int = 16000
     tgt_vocab_size: int = 16000
     d_model: int = 512
@@ -74,7 +66,7 @@ class EncoderDecoderConfig:
     norm_first: bool = True
     bias: bool = True
     pos_encoding: Literal["sinusoidal", "learned"] = "sinusoidal"
-    share_embeddings: bool = False                                   # True for shared src/tgt vocab
+    share_embeddings: bool = False
 
     @property
     def d_head(self) -> int:
@@ -84,11 +76,6 @@ class EncoderDecoderConfig:
 
 @dataclass
 class MaskedLMConfig:
-    """
-    Encoder-only masked language model (BERT style).
-
-    Bidirectional self-attention, trained with masked token prediction.
-    """
     vocab_size: int = 30000
     d_model: int = 768
     n_heads: int = 12
