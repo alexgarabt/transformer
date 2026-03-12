@@ -283,7 +283,7 @@ def cmd_train(args):
     train_ds = TextDataset(train_path, seq_len=model_config.max_seq_len)
     train_loader = DataLoader(
         train_ds, batch_size=training_config.batch_size,
-        shuffle=True, num_workers=4, pin_memory=True,
+        shuffle=True, num_workers=8, pin_memory=True,
     )
 
     val_loader = None
@@ -291,7 +291,7 @@ def cmd_train(args):
         val_ds = TextDataset(val_path, seq_len=model_config.max_seq_len)
         val_loader = DataLoader(
             val_ds, batch_size=training_config.batch_size,
-            shuffle=False, num_workers=4, pin_memory=True,
+            shuffle=False, num_workers=8, pin_memory=True,
         )
 
     grad_accum = training_config.gradient_accumulation_steps
@@ -355,12 +355,12 @@ def cmd_continue(args):
     model = TransformerLM(model_config)
 
     train_ds = TextDataset(train_path, seq_len=model_config.max_seq_len)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True)
 
     val_loader = None
     if val_path:
         val_ds = TextDataset(val_path, seq_len=model_config.max_seq_len)
-        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True)
 
     ckpt_dir = Path(args.checkpoint_dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)

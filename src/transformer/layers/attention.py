@@ -125,15 +125,16 @@ class MultiHeadAttention(nn.Module):
             output = self.W_O(self._reshape_from_heads(context))
             return output, attn_weights
 
-        # Flash attention O(n) memory
+        # Flash Attention: O(N) memory, 2-4× faster
         context = F.scaled_dot_product_attention(
             Q, K, V,
-            attn_mask=mask,
+            attn_mask=None if causal else mask,
             is_causal=causal,
             dropout_p=self.dropout.p if self.training else 0.0,
         )
 
         output = self.W_O(self._reshape_from_heads(context))
+        return output
 
 
     def _reshape_to_heads(self, x: torch.Tensor) -> torch.Tensor:

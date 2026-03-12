@@ -14,8 +14,8 @@
         "weight_tying": true
     },
     "training": {
-        "batch_size": 512,
-        "learning_rate": 6e-4,
+        "batch_size": 1024,
+        "learning_rate": 8.5e-4,
         "max_epochs": 1,
         "grad_clip": 1.0,
         "log_every": 100,
