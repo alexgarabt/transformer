@@ -14,8 +14,8 @@
         "weight_tying": true
     },
     "training": {
-        "batch_size": 1024,
-        "learning_rate": 8.5e-4,
+        "batch_size": 128,
+        "learning_rate": 6e-4,
         "max_epochs": 1,
         "grad_clip": 1.0,
         "log_every": 100,
@@ -23,7 +23,7 @@
         "checkpoint_dir": "checkpoints/llama_124m",
         "tensorboard_dir": "runs/llama_124m",
         "precision": "bfloat16",
-        "gradient_accumulation_steps": 1
+        "gradient_accumulation_steps": 4
     },
     "tokenizer_path": "data/tok_32k.model",
     "train_data": "data/train_10bt.npy",
