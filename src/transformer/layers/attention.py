@@ -85,27 +85,55 @@ class MultiHeadAttention(nn.Module):
         V = self._reshape_to_heads(self.W_V(v_src))
 
         # scaled dot product attention
-        scores = (Q @ K.transpose(-2, -1)) / self.scale
+        #scores = (Q @ K.transpose(-2, -1)) / self.scale
 
-        # apply masks
-        if causal:
-            causal_mask = torch.triu(torch.ones(seq_q, seq_k, device=scores.device, dtype=torch.bool), diagonal=1)
-            scores = scores.masked_fill(causal_mask, float("-inf"))
+        ##########################################################
+        ################# NORAMAL ATTENTION      #################
+        ##########################################################
+        ## apply masks
+        #if causal:
+        #    causal_mask = torch.triu(torch.ones(seq_q, seq_k, device=scores.device, dtype=torch.bool), diagonal=1)
+        #    scores = scores.masked_fill(causal_mask, float("-inf"))
 
-        if mask is not None:
-            scores = scores.masked_fill(mask, float("-inf"))
+        #if mask is not None:
+        #    scores = scores.masked_fill(mask, float("-inf"))
 
-        # softmax + dropout
-        attn_weights = F.softmax(scores, dim=-1)
-        attn_weights_dropped = self.dropout(attn_weights)
+        ## softmax + dropout
+        #attn_weights = F.softmax(scores, dim=-1)
+        #attn_weights_dropped = self.dropout(attn_weights)
 
-        # heads values -> (batch, n_heads, seq_q, d_head)
-        context = attn_weights_dropped @ V
-        context = self._reshape_from_heads(context)
-        output = self.W_O(context)
+        ## heads values -> (batch, n_heads, seq_q, d_head)
+        #context = attn_weights_dropped @ V
+        #context = self._reshape_from_heads(context)
+        #output = self.W_O(context)
 
-        if return_weights: return output, attn_weights
-        return output
+        #if return_weights: return output, attn_weights
+        #return output
+
+        ##########################################################
+        #################  USE  FLASH ATTENTION  #################
+        ##########################################################
+        if return_weights:
+            scores = (Q @ K.transpose(-2, -1)) / self.scale
+            if causal:
+                causal_mask = torch.triu(torch.ones(seq_q, seq_k, device=scores.device, dtype=torch.bool), diagonal=1)
+                scores = scores.masked_fill(causal_mask, float("-inf"))
+            if mask is not None:
+                scores = scores.masked_fill(mask, float("-inf"))
+            attn_weights = F.softmax(scores, dim=-1)
+            context = self.dropout(attn_weights) @ V
+            output = self.W_O(self._reshape_from_heads(context))
+            return output, attn_weights
+
+        # Flash attention O(n) memory
+        context = F.scaled_dot_product_attention(
+            Q, K, V,
+            attn_mask=mask,
+            is_causal=causal,
+            dropout_p=self.dropout.p if self.training else 0.0,
+        )
+
+        output = self.W_O(self._reshape_from_heads(context))
 
 
     def _reshape_to_heads(self, x: torch.Tensor) -> torch.Tensor:
