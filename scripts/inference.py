@@ -5,20 +5,23 @@ Loads params.json to reconstruct model + tokenizer automatically.
 Supports streaming output, sampling, greedy, and beam search.
 
 Usage:
-    # Sampling with repetition penalty
-    uv run python scripts/inference.py --checkpoint checkpoints/best_model.pt --prompt "Once upon a time" --repetition-penalty 1.3
+    # Sampling (params.json auto-detected from checkpoint dir)
+    uv run python scripts/inference.py --checkpoint checkpoints/llama_124m/best_model.pt --prompt "Once upon a time"
+
+    # Explicit params.json path
+    uv run python scripts/inference.py --checkpoint checkpoints/llama_124m/best_model.pt --params checkpoints/llama_124m/params.json --prompt "Hello"
 
     # Greedy
-    uv run python scripts/inference.py --checkpoint checkpoints/best_model.pt --prompt "The answer is" --strategy greedy
+    uv run python scripts/inference.py --checkpoint checkpoints/llama_124m/best_model.pt --prompt "The answer is" --strategy greedy
 
     # Beam search
-    uv run python scripts/inference.py --checkpoint checkpoints/best_model.pt --prompt "In the beginning" --strategy beam --beam-size 5
+    uv run python scripts/inference.py --checkpoint checkpoints/llama_124m/best_model.pt --prompt "In the beginning" --strategy beam --beam-size 5
 
-    # Full control
-    uv run python scripts/inference.py --checkpoint checkpoints/best_model.pt --prompt "Hello" --temperature 0.8 --top-k 50 --top-p 0.95 --repetition-penalty 1.3
+    # Full sampling control
+    uv run python scripts/inference.py --checkpoint checkpoints/llama_124m/best_model.pt --prompt "Hello" --temperature 0.8 --top-k 50 --top-p 0.95 --repetition-penalty 1.3
 
     # No streaming
-    uv run python scripts/inference.py --checkpoint checkpoints/best_model.pt --prompt "Test" --no-stream
+    uv run python scripts/inference.py --checkpoint checkpoints/llama_124m/best_model.pt --prompt "Test" --no-stream
 """
 
 import argparse
@@ -37,21 +40,37 @@ from transformer.generation import generate, generate_stream, beam_search
 
 def load_model_and_tokenizer(
     checkpoint_path: str,
+    params_path: str | None,
     device: str,
 ) -> tuple[TransformerLM, Tokenizer, TransformerLMConfig]:
-    """Reconstruct model and tokenizer from checkpoint + params.json."""
+    """
+    Reconstruct model and tokenizer from checkpoint + params.json.
+
+    If params_path is None, looks for params.json in the same directory
+    as the checkpoint file.
+    """
     ckpt_path = Path(checkpoint_path)
-    params_path = ckpt_path.parent / "params.json"
 
-    if not params_path.exists():
-        raise FileNotFoundError(f"params.json not found in {ckpt_path.parent}")
+    # Find params.json: explicit path > same dir as checkpoint
+    if params_path is not None:
+        p_path = Path(params_path)
+    else:
+        p_path = ckpt_path.parent / "params.json"
 
-    with open(params_path) as f:
+    if not p_path.exists():
+        raise FileNotFoundError(
+            f"params.json not found at {p_path}. "
+            f"Pass --params /path/to/params.json explicitly."
+        )
+
+    with open(p_path) as f:
         params = json.load(f)
 
+    # Reconstruct model config
     valid_fields = {f.name for f in fields(TransformerLMConfig)}
     config = TransformerLMConfig(**{k: v for k, v in params["model"].items() if k in valid_fields})
 
+    # Load model weights
     model = TransformerLM(config)
     checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
 
@@ -63,6 +82,7 @@ def load_model_and_tokenizer(
     model = model.to(device)
     model.eval()
 
+    # Load tokenizer
     tokenizer = Tokenizer(params["tokenizer_path"])
 
     n_params = sum(p.numel() for p in model.parameters())
@@ -70,29 +90,32 @@ def load_model_and_tokenizer(
           f"layers={config.n_layers}, heads={config.n_heads}")
     print(f"Tokenizer: {params['tokenizer_path']} ({tokenizer.vocab_size} tokens)")
     print(f"Checkpoint: {ckpt_path} (epoch {checkpoint.get('epoch', '?')}, loss {checkpoint.get('loss', '?'):.4f})")
+    print(f"Params: {p_path}")
 
     return model, tokenizer, config
 
 
 def main():
     parser = argparse.ArgumentParser(description="Generate text from a trained model")
-    parser.add_argument("--checkpoint", type=str, required=True)
-    parser.add_argument("--prompt", type=str, default="")
+    parser.add_argument("--checkpoint", type=str, required=True, help="Path to .pt checkpoint file")
+    parser.add_argument("--params", type=str, default=None, help="Path to params.json (default: same dir as checkpoint)")
+    parser.add_argument("--prompt", type=str, default="", help="Text prompt (empty = generate from BOS)")
     parser.add_argument("--max-tokens", type=int, default=200)
     parser.add_argument("--strategy", type=str, default="sample", choices=["sample", "greedy", "beam"])
     parser.add_argument("--temperature", type=float, default=0.8)
-    parser.add_argument("--top-k", type=int, default=0)
-    parser.add_argument("--top-p", type=float, default=0.95)
-    parser.add_argument("--repetition-penalty", type=float, default=1.2, help="1.0=disabled, 1.2-1.5 for small models")
+    parser.add_argument("--top-k", type=int, default=0, help="0 = disabled")
+    parser.add_argument("--top-p", type=float, default=0.95, help="1.0 = disabled")
+    parser.add_argument("--repetition-penalty", type=float, default=1.2, help="1.0 = disabled")
     parser.add_argument("--beam-size", type=int, default=5)
     parser.add_argument("--length-penalty", type=float, default=0.6)
     parser.add_argument("--no-stream", action="store_true")
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
 
-    model, tokenizer, config = load_model_and_tokenizer(args.checkpoint, args.device)
+    # ── Load model ──
+    model, tokenizer, config = load_model_and_tokenizer(args.checkpoint, args.params, args.device)
 
-    # Tokenize prompt
+    # ── Tokenize prompt ──
     if args.prompt:
         prompt_ids = tokenizer.encode(args.prompt, add_bos=True)
     else:
@@ -110,7 +133,7 @@ def main():
         print(f"Strategy: greedy (rep_penalty={args.repetition_penalty})")
     print("─" * 60)
 
-    # Print prompt
+    # ── Print prompt ──
     if args.prompt:
         print(args.prompt, end="", flush=True)
 
@@ -164,7 +187,6 @@ def main():
             all_ids.append(token_id)
             n_generated += 1
 
-            # Decode full sequence to get correct spacing
             full_text = tokenizer.decode(all_ids)
             new_chars = full_text[len(prev_text):]
             if new_chars:
