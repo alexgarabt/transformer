@@ -4,24 +4,28 @@ Generate text from a trained model.
 Loads params.json to reconstruct model + tokenizer automatically.
 Supports streaming output, sampling, greedy, and beam search.
 
-Usage:
-    # Sampling (params.json auto-detected from checkpoint dir)
-    uv run python scripts/inference.py --checkpoint checkpoints/llama_124m/best_model.pt --prompt "Once upon a time"
+By default, downloads the pretrained model from HuggingFace Hub.
+Use --checkpoint to use a local checkpoint instead.
 
-    # Explicit params.json path
-    uv run python scripts/inference.py --checkpoint checkpoints/llama_124m/best_model.pt --params checkpoints/llama_124m/params.json --prompt "Hello"
+Usage:
+    # Default: downloads from HuggingFace Hub automatically
+    uv run python scripts/inference.py --prompt "Once upon a time"
+    uv run python scripts/inference.py --prompt "The meaning of life" --device cpu
+
+    # Local checkpoint
+    uv run python scripts/inference.py --checkpoint checkpoints/llama_124m/weights.pt --prompt "Once upon a time"
 
     # Greedy
-    uv run python scripts/inference.py --checkpoint checkpoints/llama_124m/best_model.pt --prompt "The answer is" --strategy greedy
+    uv run python scripts/inference.py --prompt "The answer is" --strategy greedy
 
     # Beam search
-    uv run python scripts/inference.py --checkpoint checkpoints/llama_124m/best_model.pt --prompt "In the beginning" --strategy beam --beam-size 5
+    uv run python scripts/inference.py --prompt "In the beginning" --strategy beam --beam-size 5
 
     # Full sampling control
-    uv run python scripts/inference.py --checkpoint checkpoints/llama_124m/best_model.pt --prompt "Hello" --temperature 0.8 --top-k 50 --top-p 0.95 --repetition-penalty 1.3
+    uv run python scripts/inference.py --prompt "Hello" --temperature 0.8 --top-k 50 --top-p 0.95 --repetition-penalty 1.3
 
     # No streaming
-    uv run python scripts/inference.py --checkpoint checkpoints/llama_124m/best_model.pt --prompt "Test" --no-stream
+    uv run python scripts/inference.py --prompt "Test" --no-stream
 """
 
 import argparse
@@ -42,6 +46,7 @@ def load_model_and_tokenizer(
     checkpoint_path: str,
     params_path: str | None,
     device: str,
+    tokenizer_path: str | None = None,
 ) -> tuple[TransformerLM, Tokenizer, TransformerLMConfig]:
     """
     Reconstruct model and tokenizer from checkpoint + params.json.
@@ -83,13 +88,16 @@ def load_model_and_tokenizer(
     model.eval()
 
     # Load tokenizer
-    tokenizer = Tokenizer(params["tokenizer_path"])
+    tok_path = tokenizer_path or params["tokenizer_path"]
+    tokenizer = Tokenizer(tok_path)
 
     n_params = sum(p.numel() for p in model.parameters())
+    loss_val = checkpoint.get("loss")
+    loss_str = f"{loss_val:.4f}" if isinstance(loss_val, (int, float)) else "N/A"
     print(f"Loaded model: {n_params:,} params, vocab={config.vocab_size}, d_model={config.d_model}, "
           f"layers={config.n_layers}, heads={config.n_heads}")
-    print(f"Tokenizer: {params['tokenizer_path']} ({tokenizer.vocab_size} tokens)")
-    print(f"Checkpoint: {ckpt_path} (epoch {checkpoint.get('epoch', '?')}, loss {checkpoint.get('loss', '?'):.4f})")
+    print(f"Tokenizer: {tok_path} ({tokenizer.vocab_size} tokens)")
+    print(f"Checkpoint: {ckpt_path} (epoch {checkpoint.get('epoch', '?')}, loss {loss_str})")
     print(f"Params: {p_path}")
 
     return model, tokenizer, config
@@ -97,8 +105,10 @@ def load_model_and_tokenizer(
 
 def main():
     parser = argparse.ArgumentParser(description="Generate text from a trained model")
-    parser.add_argument("--checkpoint", type=str, required=True, help="Path to .pt checkpoint file")
-    parser.add_argument("--params", type=str, default=None, help="Path to params.json (default: same dir as checkpoint)")
+    parser.add_argument("--checkpoint", type=str, default=None,
+                        help="Path to local .pt checkpoint (default: download from HuggingFace Hub)")
+    parser.add_argument("--params", type=str, default=None,
+                        help="Path to params.json (default: same dir as checkpoint)")
     parser.add_argument("--prompt", type=str, default="", help="Text prompt (empty = generate from BOS)")
     parser.add_argument("--max-tokens", type=int, default=200)
     parser.add_argument("--strategy", type=str, default="sample", choices=["sample", "greedy", "beam"])
@@ -112,8 +122,26 @@ def main():
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
 
+    # ── Resolve model source ──
+    if args.checkpoint is not None:
+        # Local checkpoint
+        checkpoint_path = args.checkpoint
+        params_path = args.params
+        tokenizer_override = None
+    else:
+        # Default: download from HuggingFace Hub
+        sys.path.insert(0, str(Path(__file__).parent))
+        from hub import download_from_hub
+        print("Downloading model from HuggingFace Hub...")
+        paths = download_from_hub()
+        checkpoint_path = str(paths["checkpoint"])
+        params_path = str(paths["params"])
+        tokenizer_override = str(paths["tokenizer"])
+
     # ── Load model ──
-    model, tokenizer, config = load_model_and_tokenizer(args.checkpoint, args.params, args.device)
+    model, tokenizer, config = load_model_and_tokenizer(
+        checkpoint_path, params_path, args.device, tokenizer_path=tokenizer_override
+    )
 
     # ── Tokenize prompt ──
     if args.prompt:
