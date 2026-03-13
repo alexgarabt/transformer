@@ -26,9 +26,9 @@
         "precision": "bfloat16",
         "gradient_accumulation_steps": 4
     },
-    "tokenizer_path": "data/tok_32k.model",
-    "train_data": "data/train_10bt.npy",
-    "val_data": "data/val_10bt.npy",
+    "tokenizer_path": "data/llama_124m/tok_32k.model",
+    "train_data": "data/llama_124m/train_10bt.npy",
+    "val_data": "data/llama_124m/val_10bt.npy",
     "warmup_steps": 750,
     "seed": 42
 }
