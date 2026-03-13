@@ -1,12 +1,10 @@
 # Transformer
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c.svg)](https://pytorch.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-
 A complete Transformer implementation **from scratch** in PyTorch. Every component — multi-head attention, feed-forward networks, normalization layers, positional encoding, training loop, text generation — is hand-built. No HuggingFace `transformers` library.
 
 Includes a **124M parameter pretrained model** trained on FineWeb-Edu (10B tokens), available on [HuggingFace Hub](https://huggingface.co/alexgara/llama-124m).
+
+https://github.com/user-attachments/assets/c140082e-55e8-4664-94bc-1feb06ecfc8f
 
 ## Quick Start
 

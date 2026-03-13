@@ -62,30 +62,34 @@ def cmd_upload(args: argparse.Namespace) -> None:
     api.create_repo(repo_id, exist_ok=True, repo_type="model")
     print(f"Repository: https://huggingface.co/{repo_id}")
 
-    # Clean and save model weights to a temp file
+    # Clean and save model weights to a temp file (if checkpoint exists)
     checkpoint_path = Path(args.checkpoint)
-    print(f"\nCleaning checkpoint: {checkpoint_path}")
-    clean_weights = _clean_state_dict(checkpoint_path)
-    n_params = sum(v.numel() for v in clean_weights["model_state_dict"].values())
-    print(f"  Parameters: {n_params:,}")
-    print(f"  Keys: {len(clean_weights['model_state_dict'])}")
-
     tmp_path = None
     try:
-        # Save clean weights to temp file
-        with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
-        torch.save(clean_weights, tmp_path)
-        print(f"  Clean weights: {tmp_path.stat().st_size / 1e6:.0f} MB")
-
         # Define upload manifest: (local_path, hub_path, description)
-        uploads: list[tuple[Path, str, str]] = [
-            (tmp_path, "model.pt", "Model weights"),
+        uploads: list[tuple[Path, str, str]] = []
+
+        if checkpoint_path.exists():
+            print(f"\nCleaning checkpoint: {checkpoint_path}")
+            clean_weights = _clean_state_dict(checkpoint_path)
+            n_params = sum(v.numel() for v in clean_weights["model_state_dict"].values())
+            print(f"  Parameters: {n_params:,}")
+            print(f"  Keys: {len(clean_weights['model_state_dict'])}")
+
+            with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+            torch.save(clean_weights, tmp_path)
+            print(f"  Clean weights: {tmp_path.stat().st_size / 1e6:.0f} MB")
+            uploads.append((tmp_path, "model.pt", "Model weights"))
+        else:
+            print(f"\n  Warning: Checkpoint not found at {checkpoint_path}, skipping model weights")
+
+        uploads.extend([
             (Path(args.params), "params.json", "Model config"),
             (Path(args.tokenizer), "tokenizer.model", "Tokenizer"),
             (Path(args.tokenizer_vocab), "tokenizer.vocab", "Tokenizer vocab"),
             (Path(args.config), "config/llama_124M.json", "Training config"),
-        ]
+        ])
 
         # Training data files
         data_dir = Path(args.data_dir)
@@ -105,6 +109,13 @@ def cmd_upload(args: argparse.Namespace) -> None:
             uploads.append((events_file, f"runs/{events_file.name}", "TensorBoard logs"))
         else:
             print(f"  Warning: No TensorBoard events found in {runs_dir}")
+
+        # Demo video
+        video_path = PROJECT_ROOT / "img" / "llama_124m.mp4"
+        if video_path.exists():
+            uploads.append((video_path, "img/llama_124m.mp4", "Demo video"))
+        else:
+            print(f"  Warning: Demo video not found at {video_path}")
 
         # Add README
         readme_path = Path(args.readme)

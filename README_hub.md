@@ -41,6 +41,8 @@ Every component — attention, feed-forward layers, normalization, positional en
 
 **Source code:** [github.com/alexgarabt/transformer](https://github.com/alexgarabt/transformer)
 
+https://huggingface.co/alexgara/llama-124m/resolve/main/img/llama_124m.mp4
+
 ## Model Architecture
 
 | Parameter | Value |
